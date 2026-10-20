@@ -1,0 +1,15 @@
+{
+  "name": "schwab-market-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Local-only proxy and dashboard for Schwab Trader API market data and streaming quotes.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.4"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/"
+  }
+}

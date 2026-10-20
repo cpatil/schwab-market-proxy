@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Schwab Market Proxy</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <h1>Schwab Market Proxy</h1>
+    <div class="pills">
+      <span id="pill-auth" class="pill">Auth: …</span>
+      <span id="pill-stream" class="pill">Stream: …</span>
+    </div>
+    <button id="renew" class="ghost" hidden>Renew login</button>
+    <button id="logout" class="ghost" hidden>Log out</button>
+  </header>
+
+  <main>
+    <section id="setup" class="card" hidden>
+      <h2>Configure your Schwab app</h2>
+      <p>Copy <code>.env.example</code> to <code>.env</code>, add the Client ID and Secret from
+        <a href="https://developer.schwab.com" target="_blank" rel="noopener">developer.schwab.com</a>,
+        then restart <code>npm start</code>.</p>
+    </section>
+
+    <section id="login" class="card" hidden>
+      <div class="card-head">
+        <h2 id="login-title">Log in with Schwab</h2>
+        <button id="renew-cancel" class="ghost small" type="button" hidden>Cancel</button>
+      </div>
+      <p id="renew-note" class="hint" hidden>You're still logged in, and streaming continues while you renew.
+        Finishing this resets the 7-day re-login deadline.</p>
+      <ol class="steps">
+        <li>
+          <a id="login-start" class="button" href="/auth/start" target="_blank" rel="noopener">Open Schwab login</a>
+          <span class="hint">You sign in on schwab.com. This app never sees your password.</span>
+        </li>
+        <li>
+          After you approve, the browser goes to <code id="callback-url"></code>. That page will not load; that is expected.
+          Copy the <strong>whole address</strong> from the address bar.
+        </li>
+        <li>
+          <form id="login-form" class="row">
+            <input id="redirect-url" type="url" required placeholder="https://127.0.0.1:8182/?code=…&amp;session=…" autocomplete="off" spellcheck="false">
+            <button type="submit">Finish login</button>
+          </form>
+        </li>
+      </ol>
+      <p id="login-error" class="error" role="alert"></p>
+    </section>
+
+    <section id="watch" class="card">
+      <div class="card-head">
+        <h2>Live quotes</h2>
+        <form id="add-form" class="row compact">
+          <input id="add-symbols" placeholder="AAPL, MSFT, SPY" autocomplete="off" spellcheck="false" aria-label="Symbols to add">
+          <button type="submit">Add</button>
+        </form>
+      </div>
+      <p id="stream-error" class="error" role="alert"></p>
+      <div class="table-wrap">
+        <table id="quotes">
+          <thead>
+            <tr>
+              <th>Symbol</th><th class="num">Bid</th><th class="num">Ask</th><th class="num">Last</th>
+              <th class="num">Chg</th><th class="num">Chg %</th><th class="num">Mark</th>
+              <th class="num">Volume</th><th class="num">Updated</th><th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="empty" class="hint">Add a symbol to start streaming.</p>
+    </section>
+
+    <section id="options" class="card">
+      <div class="card-head">
+        <h2>Options chain</h2>
+        <form id="opt-form" class="row compact">
+          <input id="opt-symbol" placeholder="SPY" autocomplete="off" spellcheck="false" aria-label="Underlying symbol">
+          <select id="opt-exp" aria-label="Expiration" disabled><option>Expiration</option></select>
+          <select id="opt-strikes" aria-label="Strikes shown">
+            <option value="10">10 strikes</option>
+            <option value="20" selected>20 strikes</option>
+            <option value="40">40 strikes</option>
+          </select>
+          <button type="submit">Load</button>
+        </form>
+      </div>
+      <p id="opt-summary" class="summary"></p>
+      <p id="opt-error" class="error" role="alert"></p>
+      <div class="table-wrap">
+        <table id="chain" class="chain"><thead></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Local endpoints</h2>
+      <p class="hint">Bound to 127.0.0.1 only. Use them from scripts, notebooks or other local apps.</p>
+      <dl class="endpoints">
+        <dt><code>GET /api/stream?service=LEVELONE_EQUITIES&amp;keys=AAPL,MSFT</code></dt>
+        <dd>Server-Sent Events. Each <code>data</code> event has <code>{service, key, timestamp, fields, changed}</code>; <code>fields</code> is the merged latest value. Services: <span id="services"></span>.</dd>
+        <dt><code>GET /api/marketdata/quotes?symbols=AAPL,MSFT</code></dt>
+        <dd>Passthrough to Schwab <code>/marketdata/v1/…</code>: <code>quotes</code>, <code>{symbol}/quotes</code>, <code>pricehistory</code>, <code>chains</code>, <code>expirationchain</code>, <code>movers/{index}</code>, <code>markets</code>, <code>instruments</code>. Percent-encode symbols with slashes, e.g. <code>%2FES</code>.</dd>
+        <dt><code>GET /api/marketdata/chains?symbol=SPY&amp;fromDate=…&amp;toDate=…&amp;strikeCount=20</code></dt>
+        <dd>Option chain with greeks and IV (Schwab's <code>callExpDateMap</code> / <code>putExpDateMap</code>). Expirations: <code>expirationchain?symbol=SPY</code>. Stream contracts with <code>service=LEVELONE_OPTIONS</code> using each contract's <code>symbol</code>, e.g. <code>SPY&nbsp;&nbsp;&nbsp;261120C00770000</code>.</dd>
+        <dt><code>GET /api/fields</code></dt>
+        <dd>Streamer field names per service.</dd>
+        <dt><code>GET /api/status</code></dt>
+        <dd>Login and streamer state.</dd>
+      </dl>
+      <pre id="example"></pre>
+    </section>
+  </main>
+</body>
+</html>
