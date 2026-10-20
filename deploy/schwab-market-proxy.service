@@ -1,7 +1,4 @@
-# systemd user unit. Install:
-#   mkdir -p ~/.config/systemd/user && cp deploy/schwab-market-proxy.service ~/.config/systemd/user/
-#   systemctl --user daemon-reload && systemctl --user enable --now schwab-market-proxy
-#   loginctl enable-linger "$USER"   # keep running without an open login session
+# systemd user unit. Installation: docs/deployment.md
 [Unit]
 Description=Schwab market data proxy
 StartLimitIntervalSec=0

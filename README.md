@@ -1,190 +1,143 @@
-# Schwab Market Proxy
+# schwab-market-proxy
 
-A local-only proxy and browser dashboard for **Schwab Trader API** market data:
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node.js 22.4+](https://img.shields.io/badge/node-22.4%2B-339933.svg)](package.json)
 
-- You log in on Schwab's own page (OAuth). The proxy never sees your password.
-- `GET /api/marketdata/...` passes through to Schwab's read-only `/marketdata/v1` REST endpoints.
-- The dashboard has a live watchlist and an options chain (calls/puts by strike,
-  in-the-money shading, live bid/ask/IV/delta).
-- `GET /api/stream` serves live streamer data as Server-Sent Events. One upstream
-  WebSocket is shared by every local client; symbols are reference-counted, and the
-  latest merged fields are replayed to new clients.
-- Trading and account endpoints are deliberately not exposed.
+A self-hosted proxy for the [Schwab Trader API](https://developer.schwab.com). It turns one
+authenticated Schwab session into a local market-data service: a REST passthrough, a single
+streaming connection shared over Server-Sent Events, and a browser dashboard for quotes and
+option chains.
 
-No npm dependencies. Requires Node 22.4+ (global `fetch` and `WebSocket`).
+> [!NOTE]
+> Not affiliated with or endorsed by Charles Schwab. You need your own Schwab developer app,
+> and use is subject to Schwab's API terms and your market-data agreements.
 
-## Setup
+## Features
 
-1. Create an app at <https://developer.schwab.com> with the **Market Data** (and
-   **Accounts and Trading**, needed for `userPreference`, which tells the streamer who you are) products.
-   Use the callback URL `https://127.0.0.1:8182`. Wait until the app status is
-   **Ready For Use**.
-2. `cp .env.example .env` and fill in `SCHWAB_CLIENT_ID`, `SCHWAB_CLIENT_SECRET` and the
-   exact `SCHWAB_CALLBACK_URL` you registered.
-3. `npm start`, then open <http://127.0.0.1:8787>.
-4. Click **Open Schwab login**, sign in and approve. Schwab redirects to your callback
-   URL, which won't load. Copy the whole address from the address bar, paste it into
-   the dashboard, then click **Finish login**.
+- **OAuth on Schwab's login page.** The proxy never sees your password, and access tokens
+  refresh automatically.
+- **One upstream stream, many clients.** All consumers share a single streamer WebSocket.
+  Subscriptions are reference-counted, and new clients receive the latest values immediately.
+- **Read-only by design.** Only `/marketdata/v1` is exposed. Trading and account endpoints
+  are not reachable through the proxy.
+- **Dashboard.** Live watchlist and an options chain with streaming bid, ask, IV and delta.
+- **No dependencies.** Plain Node.js using the built-in `fetch`, `WebSocket` and `http`.
 
-Tokens are stored in `data/tokens.json` (mode 0600, git-ignored). Access tokens refresh
-automatically. Schwab refresh tokens last 7 days from login, so log in again weekly; see
-[Re-authenticating](#re-authenticating-every-7-days).
+## How it works
 
-## Re-authenticating (every 7 days)
+```mermaid
+flowchart LR
+  D[Dashboard] -- REST + SSE --> P[schwab-market-proxy]
+  C[Scripts and services] -- REST + SSE --> P
+  P -- OAuth 2.0 + REST --> A[api.schwabapi.com]
+  P -- one WebSocket --> S[Schwab streamer]
+```
 
-Schwab issues two tokens at login:
+## Requirements
 
-| Token | Lifetime | Who renews it |
+- Node.js 22.4 or later.
+- A Schwab developer app in **Ready For Use** status with the *Market Data Production* and
+  *Accounts and Trading Production* APIs. The second provides `userPreference`, which
+  supplies the streamer connection details; no trading endpoint is ever called.
+
+## Quick start
+
+1. Register an app at [developer.schwab.com](https://developer.schwab.com) with the callback
+   URL `https://127.0.0.1:8182`.
+2. Configure and start the proxy:
+
+   ```bash
+   git clone https://github.com/cpatil/schwab-market-proxy.git
+   cd schwab-market-proxy
+   cp .env.example .env    # set SCHWAB_CLIENT_ID and SCHWAB_CLIENT_SECRET
+   npm start
+   ```
+
+3. Open <http://127.0.0.1:8787> and select **Open Schwab login**. After you approve access,
+   Schwab redirects to the callback URL, which does not load. Paste that full address into
+   the dashboard and select **Finish login**.
+
+Schwab requires an interactive login every 7 days. See [Authentication](docs/authentication.md).
+
+## Configuration
+
+Settings are read from environment variables or `.env`.
+
+| Variable | Default | Description |
 | --- | --- | --- |
-| Access token | 30 minutes | The proxy, automatically, using the refresh token |
-| Refresh token | 7 days from the moment you logged in | **You**, by logging in again on Schwab's page |
+| `SCHWAB_CLIENT_ID` | | App client ID from the developer portal. |
+| `SCHWAB_CLIENT_SECRET` | | App client secret. |
+| `SCHWAB_CALLBACK_URL` | `https://127.0.0.1:8182` | Must match the registered callback exactly. |
+| `PORT` | `8787` | HTTP port. |
+| `BIND_HOST` | `127.0.0.1` | Listen address. Use `0.0.0.0` to serve other machines. |
+| `ALLOWED_HOSTS` | | Additional host names or IPs, without port, that clients may use. |
+| `CORS_ORIGINS` | | Other browser origins allowed to read the API. |
+| `TOKEN_FILE` | `data/tokens.json` | Token store, created with mode `0600`. |
 
-Nothing can extend the refresh token. Schwab requires an interactive login (password and
-2-factor) at least once every 7 days.
+## API
 
-**When is it due?**
-
-- The dashboard header shows `Auth: OK · re-login by <date>`.
-- `curl -s http://myserver.local:8787/api/status | jq -r '.auth.refreshExpiresAt | ./1000 | todate'` (UTC)
-- The service log prints `auth: logged in; re-login required by <date>` at startup and whenever tokens change.
-
-Renew any time before that date. A good habit is renewing on the same day each week, which
-restarts the 7-day clock.
-
-**Steps (from any device on your LAN or tailnet):**
-
-1. Open the dashboard, e.g. `http://myserver.local:8787` (or `http://127.0.0.1:8787` on the server itself).
-2. Click **Renew login** in the header. If the login has already expired, the login panel is
-   shown without it.
-3. Click **Open Schwab login**. In the new tab, sign in to Schwab (password and 2-factor)
-   and approve access for the app and its accounts.
-4. Schwab redirects to `https://127.0.0.1:8182/?code=…&session=…`. That page fails to load;
-   this is expected. Copy the **whole address** from the address bar.
-5. Back in the dashboard, paste it and click **Finish login**. Do it right away: the code is
-   single-use and expires quickly.
-6. The header shows the new `re-login by` date, one week out.
-
-While renewing, the existing login keeps working and streams are not interrupted.
-
-**If it lapses:** the next time the proxy needs a token, Schwab rejects the refresh and the
-proxy logs out. REST calls then return HTTP 401 `not_logged_in` and streams report the state
-`waiting_for_login`. Open SSE connections stay open. Once you log in, the proxy reconnects to
-Schwab and resubscribes their symbols automatically, so clients don't have to reconnect.
-
-**Troubleshooting**
-
-| Message | Cause | Fix |
-| --- | --- | --- |
-| "This login link is stale or was not started here" | The login was started more than 15 minutes ago, before a proxy restart, or by a different proxy instance | Click **Open Schwab login** again and paste the new URL |
-| "Schwab token request failed: invalid_grant" (or similar) | The code was already used or expired | Start the login again and paste promptly |
-| "The URL must start with your callback URL" | Pasted the wrong address, or `SCHWAB_CALLBACK_URL` differs from the portal | Copy the `127.0.0.1:8182` address; check `.env` matches the portal exactly |
-| Login works but streaming fails | The app lost the *Accounts and Trading Production* API in the portal | Re-add it on developer.schwab.com |
-
-If you regenerate the client secret in the portal, update `SCHWAB_CLIENT_SECRET` in the
-server's `.env`, run `systemctl --user restart schwab-market-proxy`, then log in again.
-
-## Endpoints
-
-| Endpoint | Purpose |
+| Endpoint | Description |
 | --- | --- |
-| `GET /api/stream?service=LEVELONE_EQUITIES&keys=AAPL,MSFT` | SSE. `data` events: `{service, key, timestamp, fields, changed}`; `status` events: streamer state. |
-| `GET /api/marketdata/quotes?symbols=AAPL,MSFT` | Any `/marketdata/v1/...` path: `{symbol}/quotes`, `pricehistory`, `chains`, `expirationchain`, `movers/{index}`, `markets`, `instruments`. Percent-encode slashes in symbols (`%2FES`). |
-| `GET /api/marketdata/expirationchain?symbol=SPY` | Option expirations (`expirationList[].expirationDate`, `daysToExpiration`, `expirationType`). |
-| `GET /api/marketdata/chains?symbol=SPY&fromDate=2026-11-20&toDate=2026-11-20&strikeCount=20` | Option chain with bid/ask, volume, OI, IV (in percent) and greeks, in `callExpDateMap`/`putExpDateMap` keyed by expiration then strike. |
-| `GET /api/stream?service=LEVELONE_OPTIONS&keys=SPY%20%20%20261120C00770000` | Live option quotes. Keys are the chain's `symbol` values, internal spaces included (URL-encoded). |
-| `GET /api/fields` | Field names per streamer service. |
-| `GET /api/status` | Login and streamer state. |
+| `GET /api/stream?service={service}&keys={keys}` | Live data as Server-Sent Events. |
+| `GET /api/marketdata/{path}` | Passthrough to `/marketdata/v1/{path}`: `quotes`, `{symbol}/quotes`, `pricehistory`, `chains`, `expirationchain`, `movers/{index}`, `markets`, `instruments`. |
+| `GET /api/fields` | Field names for each streamer service. |
+| `GET /api/status` | Authentication and streamer state. |
 
 Streamer services: `LEVELONE_EQUITIES`, `LEVELONE_OPTIONS`, `LEVELONE_FUTURES`,
-`LEVELONE_FUTURES_OPTIONS`, `LEVELONE_FOREX`, `CHART_EQUITY`, `CHART_FUTURES`,
-`NYSE_BOOK`, `NASDAQ_BOOK`, `OPTIONS_BOOK`, `SCREENER_EQUITY`, `SCREENER_OPTION`.
+`LEVELONE_FUTURES_OPTIONS`, `LEVELONE_FOREX`, `CHART_EQUITY`, `CHART_FUTURES`, `NYSE_BOOK`,
+`NASDAQ_BOOK`, `OPTIONS_BOOK`, `SCREENER_EQUITY`, `SCREENER_OPTION`.
+
+Each `data` event carries the merged latest fields for one key. `changed` lists the fields
+updated by that event, and `timestamp` is `null` when cached values are replayed to a new
+client. `status` events report the streamer state: `idle`, `connecting`, `ready`,
+`reconnecting` or `waiting_for_login`. A keep-alive comment is sent every 15 seconds.
+
+```text
+event: data
+data: {"service":"LEVELONE_EQUITIES","key":"AAPL","timestamp":1792452005886,"fields":{"BID_PRICE":342.77,"ASK_PRICE":342.95},"changed":["ASK_PRICE"]}
+```
 
 ```bash
+# Stream quotes
 curl -N 'http://127.0.0.1:8787/api/stream?service=LEVELONE_EQUITIES&keys=AAPL,SPY'
+
+# One expiration of an option chain
+curl -s 'http://127.0.0.1:8787/api/marketdata/chains?symbol=SPY&fromDate=2026-11-20&toDate=2026-11-20&strikeCount=10'
 ```
 
-```python
-import json, requests
-with requests.get("http://127.0.0.1:8787/api/stream",
-                  params={"service": "LEVELONE_EQUITIES", "keys": "AAPL"}, stream=True) as r:
-    for line in r.iter_lines(decode_unicode=True):
-        if line.startswith("data: "):
-            print(json.loads(line[6:]))
-```
+Option contracts stream under `LEVELONE_OPTIONS` using each contract's `symbol` from the
+chain. These symbols contain spaces, so URL-encode them (`SPY%20%20%20261120C00770000`).
+Encode `/` in futures symbols as `%2F` in REST paths.
 
-## Run it on another machine (always on)
+## Security
 
-`deploy/schwab-market-proxy.service` is a systemd user unit (restart on failure,
-start at boot with `loginctl enable-linger`). To reach it from other devices, set
-in that machine's `.env`:
+- Binds to `127.0.0.1` by default. Requests must address `127.0.0.1`, `localhost`, `[::1]`
+  or an `ALLOWED_HOSTS` name on the configured port; others are rejected, which blocks
+  DNS rebinding.
+- Login and logout are accepted only from the dashboard's own origin.
+- Tokens and the client secret are never returned by the API.
+- When the proxy is reachable beyond loopback, anyone who can reach the port can read market
+  data and log the proxy in or out. Expose it only to trusted networks.
 
-```
-BIND_HOST=0.0.0.0
-ALLOWED_HOSTS=192.168.1.50,myserver.local,myserver,myserver.example-tailnet.ts.net
-```
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
-Log in from any device: the Schwab redirect lands on *that device's*
-`https://127.0.0.1:8182`, which won't load. Paste its address into the dashboard
-as usual; the code is useless without the client secret, which stays on the server.
+## Deployment
 
-## Operating it as a service
+The proxy runs well as a systemd user service on an always-on host. See
+[Deployment](docs/deployment.md).
 
-Replace `server` below with your SSH host for the machine running the proxy.
+## Limitations
 
-```bash
-ssh server systemctl --user status schwab-market-proxy             # state
-ssh server journalctl --user -u schwab-market-proxy -f            # live log (no secrets)
-ssh server systemctl --user restart schwab-market-proxy           # restart
-```
+- No news: the public Trader API has no news endpoint or streamer service.
+- Account and trading data are out of scope.
+- The 7-day re-authentication is a Schwab requirement and cannot be automated.
 
-Deploy code changes without copying `.env` or `data/` (the server keeps its own):
+## Contributing
 
-```bash
-rsync -a --exclude .env --exclude data/ --exclude .git/ --exclude .claude/ --exclude '*.local.md' ./ server:schwab-market-proxy/
-ssh server systemctl --user restart schwab-market-proxy
-```
-
-Changes to `public/` alone are served immediately without a restart. If a host firewall
-(e.g. ufw) blocks the port, allow it from your LAN only, for example
-`sudo ufw allow from 192.168.1.0/24 to any port 8787 proto tcp`.
-
-Keep notes about your own deployment in a `*.local.md` file; those are git-ignored.
-
-## Security model
-
-- By default listens on `127.0.0.1` only. Every request's `Host` must be
-  `127.0.0.1`, `localhost`, `[::1]` or an `ALLOWED_HOSTS` name, on the server's
-  port (blocks DNS rebinding, and requests via unlisted interfaces).
-- With `BIND_HOST=0.0.0.0`, anything that can reach a listed name can read market
-  data and log the proxy in or out. Tokens and the client secret are never returned
-  by any endpoint, and trading/account endpoints aren't exposed.
-- Login and logout accept requests only from the dashboard's own origin, with JSON bodies.
-- Other browser origins can read the proxy only if you list them in `CORS_ORIGINS`.
-- Any local process can still read market data through the proxy; that is the point
-  of a local proxy, so don't run it on a shared machine.
-
-## Not included
-
-- **News.** Schwab's public Trader API has no news endpoint or streamer service. The
-  news inside thinkorswim comes from its private backend.
-- Account and trading data. The `ACCT_ACTIVITY` streamer service and the trader
-  endpoints exist, but are out of scope here.
-
-Respect Schwab's API terms and market-data agreements. Data is for your own use.
-
-## Tests
-
-`npm test` runs the streamer, OAuth and HTTP tests against fakes. No Schwab account
-is used, so real-provider behavior (login, streamer responses) still needs a live check.
-
-## Disclaimer and credits
-
-Not affiliated with or endorsed by Charles Schwab. You need your own Schwab developer app,
-and you're responsible for following Schwab's API terms and your market-data agreements.
-
-Streamer service and field numbering was cross-checked against
-[schwab-py](https://github.com/alexgolec/schwab-py) (MIT).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Run the tests with `npm test`; they use fakes and
+need no Schwab account.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Streamer field numbering was cross-checked against
+[schwab-py](https://github.com/alexgolec/schwab-py) (MIT).

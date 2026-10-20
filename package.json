@@ -2,8 +2,25 @@
   "name": "schwab-market-proxy",
   "version": "0.1.0",
   "private": true,
+  "description": "Self-hosted proxy for Schwab Trader API market data with shared streaming over Server-Sent Events.",
   "license": "MIT",
-  "description": "Local-only proxy and dashboard for Schwab Trader API market data and streaming quotes.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cpatil/schwab-market-proxy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cpatil/schwab-market-proxy/issues"
+  },
+  "homepage": "https://github.com/cpatil/schwab-market-proxy#readme",
+  "keywords": [
+    "schwab",
+    "trader-api",
+    "market-data",
+    "options",
+    "server-sent-events",
+    "streaming",
+    "proxy"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22.4"
